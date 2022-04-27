@@ -1,5 +1,5 @@
 CC=gcc
-OPTIONS=-std=gnu99 -Wall -Wextra -Werror -pedantic 
+OPTIONS=-std=gnu99 -Wall -Wextra -Werror -pedantic -pthread 
 MAIN_FILE=proj2
 
 make: $(MAIN_FILE).c

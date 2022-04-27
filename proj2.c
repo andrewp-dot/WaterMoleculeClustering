@@ -1,20 +1,4 @@
-#include <stdlib.h>
-#include <stdio.h>
-#include <semaphore.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <time.h>
-#include <sys/mman.h>
-#include <fcntl.h>
-
-#define TRUE 1
-#define FALSE 0
-#define MAX_TIME 1000
-#define FROM_MICRO_TO_MILI 1000
-
-#define MMAP(ptr) {(ptr) = mmap(NULL, sizeof(*(ptr)) , PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1,0);}
-#define MUNMAP(ptr) {munmap((ptr), sizeof((ptr)));}
-#define PRINT_PROC(proc_func) {sem_wait(write_enable); proc_func; sem_post(write_enable);}
+#include "proj2.h"
 
 //pouzitie programu
 const char usage[] = "%s [OXYGEN AMOUNT] [HYDROGEN AMOUNT] [ATOM MAX WAIT TIME TO JOIN QUEUE (0-1000 ms)] [CREATE MOLECULE MAX WAIT TIME (0-1000 ms)]\n";
@@ -25,10 +9,11 @@ char * buffer = NULL;
 
 //semafory
 sem_t * write_enable = NULL;
-sem_t * mutex = NULL;
+sem_t * mutex = NULL; //bond
 sem_t * H_queue = NULL;
 sem_t * O_queue = NULL;
 sem_t * barier = NULL;
+sem_t * bonding_finished = NULL;
 
 
 //zdielane citace
@@ -36,6 +21,8 @@ int * action_num = NULL;
 int * no_m = NULL;
 int * no_o = NULL;
 int * no_h = NULL;
+int * id_o = NULL;
+int * id_h = NULL;
 
 FILE * out_file = NULL; 
 
@@ -50,18 +37,20 @@ void exit_and_clean(int exit_type)
     MUNMAP(no_o);
 
     //zatvaranie semaforov 
-    sem_close(write_enable);
+    sem_close(write_enable); //neuvolni sa kvoli interuptu - vyriesit not enough [ELEMENT]
     sem_close(mutex);
     sem_close(barier);
     sem_close(O_queue);
     sem_close(H_queue);
+    sem_close(bonding_finished);
     
     //odstranenie semaforov
-    sem_unlink("/xponec01.ios.proj2.sem_we");
-    sem_unlink("/xponec01.ios.proj2.sem_mutex");
-    sem_unlink("/xponec01.ios.proj2.sem_barier");
-    sem_unlink("/xponec01.ios.proj2.sem_Hq");
-    sem_unlink("/xponec01.ios.proj2.sem_Oq");
+    sem_unlink(WRITE_ENABLE_SEM);
+    sem_unlink(MUTEX_SEM);
+    sem_unlink(BARIER);
+    sem_unlink(H_QUEUE);
+    sem_unlink(O_QUEUE);
+    sem_unlink(BONDING_FINISHED);
     
     exit(exit_type);
 }
@@ -73,60 +62,65 @@ void error_exit(char * msg){
 }
 
 //inicializacia zdielanej pamate a vystupneho suboru
-void init()
+int init()
 {
-    if((write_enable = sem_open("/xponec01.ios.proj2.sem_we", O_CREAT | O_EXCL , 0660, 0)) == SEM_FAILED)
+    if((write_enable = sem_open(WRITE_ENABLE_SEM, O_CREAT | O_EXCL , 0660, 1)) == SEM_FAILED)
     {
-        fprintf(stderr,"write_enable failed.\n");
-        exit_and_clean(EXIT_FAILURE);
+        fprintf(stderr,"%s failed.\n", WRITE_ENABLE_SEM);
+        return EXIT_FAILURE;
     }
-    if((mutex = sem_open("/xponec01.ios.proj2.sem_mutex", O_CREAT | O_EXCL, 0660, 1)) == SEM_FAILED)
+    if((mutex = sem_open(MUTEX_SEM, O_CREAT | O_EXCL, 0660, 0)) == SEM_FAILED)
     {
-        fprintf(stderr,"mutex failed.\n");
-        exit_and_clean(EXIT_FAILURE);
+        fprintf(stderr,"%s failed.\n",MUTEX_SEM);
+        return EXIT_FAILURE;
     }
-    if((H_queue = sem_open("/xponec01.ios.proj2.sem_Hq", O_CREAT | O_EXCL, 0660, 1)) == SEM_FAILED)
+    if((H_queue = sem_open(H_QUEUE, O_CREAT | O_EXCL, 0660, 0)) == SEM_FAILED)
     {
-        fprintf(stderr,"H_queue failed.\n");
-        exit_and_clean(EXIT_FAILURE);
+        fprintf(stderr,"%s failed.\n",H_QUEUE);
+        return EXIT_FAILURE;
     }
-    if((O_queue = sem_open("/xponec01.ios.proj2.sem_Oq", O_CREAT | O_EXCL, 0660, 1)) == SEM_FAILED)
+    if((O_queue = sem_open(O_QUEUE, O_CREAT | O_EXCL, 0660, 0)) == SEM_FAILED)
     {
-        fprintf(stderr,"O_queue failed.\n");
-        exit_and_clean(EXIT_FAILURE);
+        fprintf(stderr,"%s failed.\n",O_QUEUE);
+        return EXIT_FAILURE;
     }
-    if((barier = sem_open("/xponec01.ios.proj2.sem_barier", O_CREAT | O_EXCL, 0660, 1)) == SEM_FAILED)
+    if((barier = sem_open(BARIER, O_CREAT | O_EXCL, 0660, 3)) == SEM_FAILED)
     {
-        fprintf(stderr,"barier failed.\n");
-        exit_and_clean(EXIT_FAILURE);
+        fprintf(stderr,"%s failed.\n", BARIER);
+        return EXIT_FAILURE;
+    }
+    if((bonding_finished = sem_open(BONDING_FINISHED, O_CREAT | O_EXCL, 0660, 0)) == SEM_FAILED)
+    {
+        fprintf(stderr,"%s failed.\n", BONDING_FINISHED);
+        return EXIT_FAILURE;
     }
     
     MMAP(action_num);
-    if(action_num == MAP_FAILED)
-    {
-        exit_and_clean(EXIT_FAILURE);
-    }
+    if(action_num == MAP_FAILED) return EXIT_FAILURE;
+    
     MMAP(no_m);
-    if(no_m == MAP_FAILED)
-    {
-        exit_and_clean(EXIT_FAILURE);
-    }
+    if(no_m == MAP_FAILED) return EXIT_FAILURE;
+  
     MMAP(no_h);
-    if(no_h == MAP_FAILED)
-    {
-        exit_and_clean(EXIT_FAILURE);
-    }
-    MMAP(no_o);
-    if(no_o == MAP_FAILED)
-    {
-        exit_and_clean(EXIT_FAILURE);
-    }
+    if(no_h == MAP_FAILED) return EXIT_FAILURE;
 
+    MMAP(no_o);
+    if(no_o == MAP_FAILED) return EXIT_FAILURE;
+
+    MMAP(id_o);
+    if(id_o == MAP_FAILED) return EXIT_FAILURE;
+
+    MMAP(id_h);
+    if(id_h == MAP_FAILED) return EXIT_FAILURE;
+    
     out_file = fopen("proj2.out", "w");
     *action_num = 1;
     *no_m = 1;
-    *no_h = 1;
-    *no_o = 1;
+    *no_h = 0;
+    *no_o = 0;
+    *id_h = 1;
+    *id_o = 1;
+    return EXIT_SUCCESS;
 }
 
 
@@ -150,7 +144,8 @@ int is_positive_number(char * num)
     // • Po spuštění vypíše: A: O idO: started
     // • Vypíše: A: O idO: going to queue a zařadí se do fronty kyslíků na vytváření molekul.
 
-    // • Ve chvíli, kdy není vytvářena žádná molekula, jsou z čela front uvolněny kyslík a dva vodíky.
+    // • Ve chvíli, kdy není vytvářena žádná molekula, jsou z čela front uvolněny kyslík a dva vodíky. //BARIERA
+
     // Příslušný proces po uvolnění vypíše: A: O idO: creating molecule noM (noM je číslo molekuly,
     // ty jsou číslovány postupně od 1).
     // • Pomocí usleep na náhodný čas v intervalu <0,TB> simuluje dobu vytváření molekuly.
@@ -163,23 +158,42 @@ int is_positive_number(char * num)
 
 void process_NO(int TI, int TB, FILE * file)
 {
-    sem_post(write_enable);
-    int id_o = *no_o;
-    *no_o += 1;
+    int local_ido = *id_o;
+    *id_o += 1;
     srand(time(NULL));
 
-    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'O',id_o,"started"));
+    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'O',local_ido,"started"));
     
     usleep((rand() % TI +1)*FROM_MICRO_TO_MILI); //TI + 1 kvoli intervalu <0,TI>
 
-    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'O',id_o,"going to queue"));
+    sem_post(O_queue); //pushnut kyslik do rady
+    *no_o += 1;
 
-    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'O',id_o,"creating molecule"));
+    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'O',local_ido,"going to queue"));
+    
+    //ak su v rade na vodiky 2 vodiky a v rade na kysliky 1 kyslik, zacni vytvarat molekulu
+     
+
+    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'O',local_ido,"creating molecule")); //mozno va_list funkciu
 
     usleep((rand() % TB +1)*FROM_MICRO_TO_MILI);
+   
+    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'O',local_ido,"molecule created"));//potom end process 
 
-    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'O',id_o,"molecule created"));//potom end process 
+    printf("M: %d\n", *no_m);
+    (*no_m)++;
 
+    
+    //OK
+    sem_post(bonding_finished); //informovat dva kysliky o ukonceni procesu zlucovania
+    sem_post(bonding_finished);
+
+    sem_wait(O_queue); //odstranit kyslik z rady
+    // if(sem_wait(O_queue))
+    // {
+    //     printf("not enouqh O\n");
+    //     exit(EXIT_SUCCESS);
+    // }
 
     exit(EXIT_SUCCESS);
 }
@@ -190,7 +204,8 @@ void process_NO(int TI, int TB, FILE * file)
     // • Následně čeká pomocí volání usleep náhodný čas v intervalu <0,TI>
     // • Vypíše: A: H idH: going to queue a zařadí se do fronty vodíků na vytváření molekul.
 
-    // • Ve chvíli, kdy není vytvářena žádná molekula, jsou z čela front uvolněny kyslík a dva vodíky.
+    // • Ve chvíli, kdy není vytvářena žádná molekula, jsou z čela front uvolněny kyslík a dva vodíky. //BARIERA
+
     // Příslušný proces po uvolnění vypíše: A: H idH: creating molecule noM (noM je číslo molekuly,
     // ty jsou číslovány postupně od 1).
 
@@ -202,15 +217,32 @@ void process_NO(int TI, int TB, FILE * file)
 void process_NH(int TI, FILE * file)
 {
     
-    int idH = *no_h;
-    *no_h += 1;
+    int local_idh = *id_h;
+    *id_h += 1;
     srand(time(NULL));
 
-    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'H',idH,"started"));
+    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'H',local_idh,"started"));
 
     usleep((rand() % TI +1)*FROM_MICRO_TO_MILI); //TI + 1 kvoli intervalu <0,TI>
 
-    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'H',idH,"going to queue")); 
+    sem_post(H_queue); //pushnut vodik do rady
+    (*no_h)++;
+
+    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'H',local_idh,"going to queue")); 
+   
+
+    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'H',local_idh,"creating molecule")); 
+    
+    //OK
+    sem_wait(bonding_finished);
+    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'H',local_idh,"molecule created")); 
+
+    // if(sem_wait(H_queue))
+    // {
+    //     printf("not enouqh H\n");
+    //      exit(EXIT_SUCCESS);
+    // } //odstranit vodik z rady
+
 
     exit(EXIT_SUCCESS);
 }
@@ -260,14 +292,11 @@ void process_main(unsigned int NO, unsigned int NH, unsigned int TI, unsigned in
 int main(int argc, char * argv[])
 {
     //inicializacia zdielanej pamate
-    init();
+    if(init() == EXIT_FAILURE) exit_and_clean(EXIT_FAILURE);
 
     //overenie poctu argumentov
-    if(argc != 5)
-    {   
-        error_exit("Zlý počet argumentov.");
-    }
-
+    if(argc != 5)  error_exit("Zlý počet argumentov.");
+ 
     //overenie format vstupnych dat - musi to byt kladne cislo
     for(int idx = 1; idx < argc; idx++)
     {
@@ -284,11 +313,8 @@ int main(int argc, char * argv[])
     unsigned int TB = atoi(argv[4]); 
 
     //overenie maximalnej dlzky casov
-    if(TI > MAX_TIME || TB > MAX_TIME)
-    {
-        error_exit("Zadaný príliš dlhý časový rozsah.");
-    }
-
+    if(TI > MAX_TIME || TB > MAX_TIME) error_exit("Zadaný príliš dlhý časový rozsah.");
+       
     process_main(NO,NH,TI,TB);
     while (wait(NULL) > 0);//cyklí dokial su child procesy aktivne
     
@@ -298,15 +324,6 @@ int main(int argc, char * argv[])
 
 
 // PARSING ZADANIA
-
-// Tri procesy:
-// 0 - hl proces 
-// 1 - kyslik
-// 2 - vodik
-
-// Dve rady: 
-// a) pre kysliky 
-// b) pre vodiky
 
 // naraz je mozne vytvarat iba jednu molekulu. procesy uvolnia miesto dalsim atomov na vytvorenie dalsej molekuly a skoncia.
 // ak nie je k dispozici dostatok atomov na vytvorenie vodika (ziadne dalsie moleuly nebudu procesom 0 vytvorene),
@@ -325,3 +342,4 @@ int main(int argc, char * argv[])
 // molecule created 
 // not enough <element>
 
+//mozno pouzit setbuff
