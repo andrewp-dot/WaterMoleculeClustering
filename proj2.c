@@ -4,16 +4,16 @@
 const char usage[] = "%s [OXYGEN AMOUNT] [HYDROGEN AMOUNT] [ATOM MAX WAIT TIME TO JOIN QUEUE (0-1000 ms)] [CREATE MOLECULE MAX WAIT TIME (0-1000 ms)]\n";
 
 //cislo akcie, prvok, id prvku, akcia
-const char output_format[] = "%d: %c %d: %s\n";
+const char output_format[] = "%d: %c %d: ";
 char * buffer = NULL;
 
 //semafory
 sem_t * write_enable = NULL;
-sem_t * mutex = NULL; //bond
-sem_t * H_queue = NULL;
+sem_t * mutex = NULL; //create_molecule process
+sem_t * H_queue = NULL; //queues pouzit na ceknutie, ci je dost kyslikov a vodikov 
 sem_t * O_queue = NULL;
-sem_t * barier = NULL;
-sem_t * bonding_finished = NULL;
+sem_t * barier = NULL; //create_molecule process
+sem_t * bonding_finished = NULL; 
 
 
 //zdielane citace
@@ -69,7 +69,7 @@ int init()
         fprintf(stderr,"%s failed.\n", WRITE_ENABLE_SEM);
         return EXIT_FAILURE;
     }
-    if((mutex = sem_open(MUTEX_SEM, O_CREAT | O_EXCL, 0660, 0)) == SEM_FAILED)
+    if((mutex = sem_open(MUTEX_SEM, O_CREAT | O_EXCL, 0660, 1)) == SEM_FAILED)
     {
         fprintf(stderr,"%s failed.\n",MUTEX_SEM);
         return EXIT_FAILURE;
@@ -123,6 +123,17 @@ int init()
     return EXIT_SUCCESS;
 }
 
+//print do suboru
+void my_fprintf(FILE * file,char elem, int local_id, const char * fmt, ...)
+{
+    va_list args;
+    va_start(args,fmt);
+    
+    fprintf(file,output_format,(*action_num)++,elem,local_id);
+    vfprintf(file, fmt, args);
+
+    va_end(args);
+}
 
 //overenie vstupneho stringu 
 int is_positive_number(char * num)
@@ -162,38 +173,41 @@ void process_NO(int TI, int TB, FILE * file)
     *id_o += 1;
     srand(time(NULL));
 
-    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'O',local_ido,"started"));
+    PRINT_PROC(my_fprintf(file,'O',local_ido,"started\n"));
     
     usleep((rand() % TI +1)*FROM_MICRO_TO_MILI); //TI + 1 kvoli intervalu <0,TI>
 
     sem_post(O_queue); //pushnut kyslik do rady
     *no_o += 1;
 
-    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'O',local_ido,"going to queue"));
+    if(*no_h == 2 && * no_o == 1)
+    {
+        sem_wait(mutex);
+    }
+
+    PRINT_PROC(my_fprintf(file,'O',local_ido,"going to queue \n"));
     
     //ak su v rade na vodiky 2 vodiky a v rade na kysliky 1 kyslik, zacni vytvarat molekulu
      
 
-    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'O',local_ido,"creating molecule")); //mozno va_list funkciu
+    PRINT_PROC(my_fprintf(file,'O',local_ido,"crerating molecule %d \n", *no_m)); //mozno va_list funkciu
 
     usleep((rand() % TB +1)*FROM_MICRO_TO_MILI);
-   
-    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'O',local_ido,"molecule created"));//potom end process 
+    
+    PRINT_PROC(my_fprintf(file,'O',local_ido,"molecule %d created\n", *no_m));
+
+    //PRINT_PROC(fprintf(file,output_format,(*action_num)++,'O',local_ido,"molecule created"));//potom end process 
 
     printf("M: %d\n", *no_m);
     (*no_m)++;
 
-    
     //OK
     sem_post(bonding_finished); //informovat dva kysliky o ukonceni procesu zlucovania
     sem_post(bonding_finished);
 
     sem_wait(O_queue); //odstranit kyslik z rady
-    // if(sem_wait(O_queue))
-    // {
-    //     printf("not enouqh O\n");
-    //     exit(EXIT_SUCCESS);
-    // }
+
+    sem_post(mutex);
 
     exit(EXIT_SUCCESS);
 }
@@ -216,41 +230,38 @@ void process_NO(int TI, int TB, FILE * file)
 
 void process_NH(int TI, FILE * file)
 {
-    
+    (void)file;
     int local_idh = *id_h;
     *id_h += 1;
     srand(time(NULL));
 
-    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'H',local_idh,"started"));
+    PRINT_PROC(my_fprintf(file,'H',local_idh,"started\n"));
 
     usleep((rand() % TI +1)*FROM_MICRO_TO_MILI); //TI + 1 kvoli intervalu <0,TI>
 
     sem_post(H_queue); //pushnut vodik do rady
     (*no_h)++;
 
-    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'H',local_idh,"going to queue")); 
+    PRINT_PROC(my_fprintf(file,'H',local_idh,"going to queue\n")); 
    
 
-    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'H',local_idh,"creating molecule")); 
+    if(*no_h == 2 && * no_o == 1) //túto podmienku upravit
+    {
+        sem_wait(mutex);
+    }
+
+    PRINT_PROC(my_fprintf(file,'H',local_idh,"creating molecule %d\n", *no_m));
     
     //OK
     sem_wait(bonding_finished);
-    PRINT_PROC(fprintf(file,output_format,(*action_num)++,'H',local_idh,"molecule created")); 
+     PRINT_PROC(my_fprintf(file,'H',local_idh,"molecule %d created\n", *no_m));
 
-    // if(sem_wait(H_queue))
-    // {
-    //     printf("not enouqh H\n");
-    //      exit(EXIT_SUCCESS);
-    // } //odstranit vodik z rady
 
+    sem_post(mutex);
 
     exit(EXIT_SUCCESS);
 }
 
-    //PROCES HL - az po predoslych dvoch
-    // Hlavní proces vytváří ihned po spuštění NO procesů kyslíku a NH procesů vodíku.
-    // • Poté čeká na ukončení všech procesů, které aplikace vytváří. Jakmile jsou tyto procesy
-    // ukončeny, ukončí se i hlavní proces s kódem (exit code) 0.
 
 void process_main(unsigned int NO, unsigned int NH, unsigned int TI, unsigned int TB) //po ukonceni oboch procesov sa proces ukonci
 {
