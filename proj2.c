@@ -84,7 +84,7 @@ int init()
         fprintf(stderr,"%s failed.\n",O_QUEUE);
         return EXIT_FAILURE;
     }
-    if((barier = sem_open(BARIER, O_CREAT | O_EXCL, 0660, 3)) == SEM_FAILED)
+    if((barier = sem_open(BARIER, O_CREAT | O_EXCL, 0660, 1)) == SEM_FAILED)
     {
         fprintf(stderr,"%s failed.\n", BARIER);
         return EXIT_FAILURE;
@@ -169,43 +169,54 @@ int is_positive_number(char * num)
 
 void process_NO(int TI, int TB, FILE * file)
 {
+    //inicializacia ID kysliku
     int local_ido = *id_o;
     *id_o += 1;
+
     srand(time(NULL));
 
     PRINT_PROC(my_fprintf(file,'O',local_ido,"started\n"));
     
     usleep((rand() % TI +1)*FROM_MICRO_TO_MILI); //TI + 1 kvoli intervalu <0,TI>
 
-    sem_post(O_queue); //pushnut kyslik do rady
-    *no_o += 1;
-
-    if(*no_h == 2 && * no_o == 1)
-    {
-        sem_wait(mutex);
-    }
+    //sem_post(O_queue); //pushnut kyslik do rady
+    
 
     PRINT_PROC(my_fprintf(file,'O',local_ido,"going to queue \n"));
     
     //ak su v rade na vodiky 2 vodiky a v rade na kysliky 1 kyslik, zacni vytvarat molekulu
-     
+    sem_wait(mutex);
+    (*no_o)++;
+    int local_mol = *no_m;
+    if(*no_h >= 2) //túto podmienku upravit
+    {
+        sem_wait(barier);
 
-    PRINT_PROC(my_fprintf(file,'O',local_ido,"crerating molecule %d \n", *no_m)); //mozno va_list funkciu
+        sem_post(H_queue);
+        sem_post(H_queue);
+        (*no_h) -= 2;
+
+        sem_post(O_queue);
+        (*no_o)--;
+
+        sem_post(barier);
+    }   
+    else
+    {
+        sem_post(mutex);
+    }
+
+    sem_wait(O_queue);
+    
+    PRINT_PROC(my_fprintf(file,'O',local_ido,"creating molecule %d \n", local_mol)); //mozno va_list funkciu
 
     usleep((rand() % TB +1)*FROM_MICRO_TO_MILI);
-    
-    PRINT_PROC(my_fprintf(file,'O',local_ido,"molecule %d created\n", *no_m));
-
-    //PRINT_PROC(fprintf(file,output_format,(*action_num)++,'O',local_ido,"molecule created"));//potom end process 
-
-    printf("M: %d\n", *no_m);
+        
+    PRINT_PROC(my_fprintf(file,'O',local_ido,"molecule %d created\n", local_mol));
     (*no_m)++;
-
     //OK
     sem_post(bonding_finished); //informovat dva kysliky o ukonceni procesu zlucovania
     sem_post(bonding_finished);
-
-    sem_wait(O_queue); //odstranit kyslik z rady
 
     sem_post(mutex);
 
@@ -230,36 +241,53 @@ void process_NO(int TI, int TB, FILE * file)
 
 void process_NH(int TI, FILE * file)
 {
-    (void)file;
+    //inicializacia ID vodiku
     int local_idh = *id_h;
     *id_h += 1;
+
     srand(time(NULL));
 
     PRINT_PROC(my_fprintf(file,'H',local_idh,"started\n"));
 
     usleep((rand() % TI +1)*FROM_MICRO_TO_MILI); //TI + 1 kvoli intervalu <0,TI>
 
-    sem_post(H_queue); //pushnut vodik do rady
-    (*no_h)++;
-
     PRINT_PROC(my_fprintf(file,'H',local_idh,"going to queue\n")); 
-   
 
-    if(*no_h == 2 && * no_o == 1) //túto podmienku upravit
+    sem_wait(mutex);
+    (*no_h)++;
+    
+    if(*no_h >= 2 && *no_o >= 1) 
     {
-        sem_wait(mutex);
+        sem_wait(barier);
+
+        sem_post(H_queue);
+        sem_post(H_queue);
+        (*no_h) -= 2;
+
+        sem_post(O_queue);
+        (*no_h)--;
+
+        sem_post(barier);
+    }
+    else
+    {
+        sem_post(mutex);
     }
 
-    PRINT_PROC(my_fprintf(file,'H',local_idh,"creating molecule %d\n", *no_m));
+    sem_wait(H_queue);
+
+    int local_mol = *no_m;
+
     
-    //OK
+
+    PRINT_PROC(my_fprintf(file,'H',local_idh,"creating molecule %d\n", local_mol));
+
     sem_wait(bonding_finished);
-     PRINT_PROC(my_fprintf(file,'H',local_idh,"molecule %d created\n", *no_m));
 
-
-    sem_post(mutex);
+    PRINT_PROC(my_fprintf(file,'H',local_idh,"molecule %d created\n", local_mol));
 
     exit(EXIT_SUCCESS);
+
 }
 
 
