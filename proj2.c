@@ -12,8 +12,10 @@ sem_t * write_enable = NULL;
 sem_t * mutex = NULL; //create_molecule process
 sem_t * H_queue = NULL; //queues pouzit na ceknutie, ci je dost kyslikov a vodikov 
 sem_t * O_queue = NULL;
-sem_t * barier = NULL; //create_molecule process
+sem_t * barier_H = NULL; //create_molecule process
+sem_t * barier_O = NULL;
 sem_t * bonding_finished = NULL; 
+sem_t * bond = NULL;
 
 
 //zdielane citace
@@ -39,19 +41,23 @@ void exit_and_clean(int exit_type)
     //zatvaranie semaforov 
     sem_close(write_enable); //neuvolni sa kvoli interuptu - vyriesit not enough [ELEMENT]
     sem_close(mutex);
-    sem_close(barier);
+    sem_close(barier_H);
+    sem_close(barier_O);
     sem_close(O_queue);
     sem_close(H_queue);
     sem_close(bonding_finished);
+    sem_close(bond);
     
     //odstranenie semaforov
     sem_unlink(WRITE_ENABLE_SEM);
     sem_unlink(MUTEX_SEM);
-    sem_unlink(BARIER);
     sem_unlink(H_QUEUE);
     sem_unlink(O_QUEUE);
     sem_unlink(BONDING_FINISHED);
-    
+    sem_unlink(BOND);
+    sem_unlink(BARIER_H);
+    sem_unlink(BARIER_O);
+
     exit(exit_type);
 }
 
@@ -84,9 +90,14 @@ int init()
         fprintf(stderr,"%s failed.\n",O_QUEUE);
         return EXIT_FAILURE;
     }
-    if((barier = sem_open(BARIER, O_CREAT | O_EXCL, 0660, 1)) == SEM_FAILED)
+    if((barier_H = sem_open(BARIER_H, O_CREAT | O_EXCL, 0660, 0)) == SEM_FAILED)
     {
-        fprintf(stderr,"%s failed.\n", BARIER);
+        fprintf(stderr,"%s failed.\n", BARIER_H);
+        return EXIT_FAILURE;
+    }
+    if((barier_O = sem_open(BARIER_O, O_CREAT | O_EXCL, 0660, 0)) == SEM_FAILED)
+    {
+        fprintf(stderr,"%s failed.\n", BARIER_O);
         return EXIT_FAILURE;
     }
     if((bonding_finished = sem_open(BONDING_FINISHED, O_CREAT | O_EXCL, 0660, 0)) == SEM_FAILED)
@@ -94,6 +105,12 @@ int init()
         fprintf(stderr,"%s failed.\n", BONDING_FINISHED);
         return EXIT_FAILURE;
     }
+    if((bond = sem_open(BOND, O_CREAT | O_EXCL, 0660, 1)) == SEM_FAILED)
+    {
+        fprintf(stderr,"%s failed.\n", BOND);
+        return EXIT_FAILURE;
+    }
+
     
     MMAP(action_num);
     if(action_num == MAP_FAILED) return EXIT_FAILURE;
@@ -167,56 +184,76 @@ int is_positive_number(char * num)
     // • Pokud již není k dispozici dostatek vodíků (ani nebudou žádné další vytvořeny/zařazeny do (queue_O prazdna && idO == NO)
     // fronty) vypisuje: A: O idO: not enough H a proces končí.
 
-void process_NO(int TI, int TB, FILE * file)
+void process_NO(int NH, int NO,int TI, int TB, FILE * file)
 {
     //inicializacia ID kysliku
     int local_ido = *id_o;
-    *id_o += 1;
 
+    //semafor na pristup do pamate - aby sa inkrementovala premenna v jeden cas iba raz
+    
+    USE_SHM(*id_o += 1);
+    
     srand(time(NULL));
 
-    PRINT_PROC(my_fprintf(file,'O',local_ido,"started\n"));
+    USE_SHM(my_fprintf(file,'O',local_ido,"started\n"));
     
     usleep((rand() % TI +1)*FROM_MICRO_TO_MILI); //TI + 1 kvoli intervalu <0,TI>
 
-    //sem_post(O_queue); //pushnut kyslik do rady
+    USE_SHM(my_fprintf(file,'O',local_ido,"going to queue \n"));
     
-
-    PRINT_PROC(my_fprintf(file,'O',local_ido,"going to queue \n"));
-    
-    //ak su v rade na vodiky 2 vodiky a v rade na kysliky 1 kyslik, zacni vytvarat molekulu
     sem_wait(mutex);
-    (*no_o)++;
+    
     int local_mol = *no_m;
-    if(*no_h >= 2) //túto podmienku upravit
+    USE_SHM((*no_o)++);
+
+    if(*no_h >= 2) 
     {
-        sem_wait(barier);
+        sem_wait(bond);
 
-        sem_post(H_queue);
-        sem_post(H_queue);
-        (*no_h) -= 2;
+        sem_post(barier_H);
+        sem_post(barier_H);
 
-        sem_post(O_queue);
-        (*no_o)--;
+        USE_SHM((*no_h) -= 2);
 
-        sem_post(barier);
+        sem_post(barier_O);
+        USE_SHM((*no_o)--);
+
+        sem_post(bond);
+
     }   
     else
     {
         sem_post(mutex);
     }
 
-    sem_wait(O_queue);
+    sem_wait(barier_O);
+    // printf("molecule: %d H: %d O: %d\n", *no_m, *no_h, *no_o);
+    if( *no_m > NO || *no_m*2 > NH) //vyladit mozna
+    {
+        USE_SHM(my_fprintf(file,'O',local_ido,"Not enough H\n"));
+        exit(EXIT_SUCCESS);
+    }
+
+    (void)NO;
+    (void)NH;
+    //podmienka here
     
-    PRINT_PROC(my_fprintf(file,'O',local_ido,"creating molecule %d \n", local_mol)); //mozno va_list funkciu
+    
+    USE_SHM(my_fprintf(file,'O',local_ido,"creating molecule %d \n",  local_mol)); //mozno va_list funkciu
 
     usleep((rand() % TB +1)*FROM_MICRO_TO_MILI);
         
-    PRINT_PROC(my_fprintf(file,'O',local_ido,"molecule %d created\n", local_mol));
-    (*no_m)++;
-    //OK
+    USE_SHM(my_fprintf(file,'O',local_ido,"molecule %d created\n",  local_mol));
+
     sem_post(bonding_finished); //informovat dva kysliky o ukonceni procesu zlucovania
     sem_post(bonding_finished);
+
+    (*no_m)++;
+
+    if( NO == *no_m)
+    {
+        sem_post(barier_H);
+    }
 
     sem_post(mutex);
 
@@ -239,55 +276,72 @@ void process_NO(int TI, int TB, FILE * file)
     // • Pokud již není k dispozici dostatek vodíků (ani nebudou žádné další vytvořeny/zařazeny do
     // fronty) vypisuje: A: H idH: not enough O or H a process končí.
 
-void process_NH(int TI, FILE * file)
+void process_NH(int NO, int NH, int TI, FILE * file)
 {
     //inicializacia ID vodiku
     int local_idh = *id_h;
-    *id_h += 1;
 
+    USE_SHM(*id_h += 1;);
+
+    // printf("A %d\n", local_idh);
     srand(time(NULL));
 
-    PRINT_PROC(my_fprintf(file,'H',local_idh,"started\n"));
+    USE_SHM(my_fprintf(file,'H',local_idh,"started\n"));
 
     usleep((rand() % TI +1)*FROM_MICRO_TO_MILI); //TI + 1 kvoli intervalu <0,TI>
 
-    PRINT_PROC(my_fprintf(file,'H',local_idh,"going to queue\n")); 
+    USE_SHM(my_fprintf(file,'H',local_idh,"going to queue\n")); 
 
     sem_wait(mutex);
-    (*no_h)++;
-    
+
+    USE_SHM((*no_h)++;);
+
     if(*no_h >= 2 && *no_o >= 1) 
     {
-        sem_wait(barier);
+        sem_wait(bond);
 
-        sem_post(H_queue);
-        sem_post(H_queue);
-        (*no_h) -= 2;
+        sem_post(barier_H);
+        sem_post(barier_H);
+        
+        USE_SHM((*no_h) -= 2;);
 
-        sem_post(O_queue);
-        (*no_h)--;
+        sem_post(barier_O);
+        USE_SHM((*no_o)--;);
 
-        sem_post(barier);
+        sem_post(bond);
     }
     else
     {
         sem_post(mutex);
     }
 
-    sem_wait(H_queue);
+    // (void)NH;
+    // (void)NO;
+    sem_wait(barier_H);
 
     int local_mol = *no_m;
+    if( *no_m > NO || *no_m*2 > NH ) // vyladit
+    {
+        USE_SHM(my_fprintf(file,'H',local_idh,"Not enough O or H\n"));
+        sem_post(barier_O);
+        exit(EXIT_SUCCESS);
+    }
 
-    
-
-    PRINT_PROC(my_fprintf(file,'H',local_idh,"creating molecule %d\n", local_mol));
+    USE_SHM(my_fprintf(file,'H',local_idh,"creating molecule %d\n",  local_mol));
 
     sem_wait(bonding_finished);
 
-    PRINT_PROC(my_fprintf(file,'H',local_idh,"molecule %d created\n", local_mol));
+    USE_SHM(my_fprintf(file,'H',local_idh,"molecule %d created\n",  local_mol));
+
+    if(*no_m -1 == NO)
+    {
+        sem_post(barier_O);
+        sem_post(barier_H);
+        sem_post(mutex);
+    }
+    printf("NO %d, NM : %d \n", NO, *no_m);
 
     exit(EXIT_SUCCESS);
-
 }
 
 
@@ -298,7 +352,7 @@ void process_main(unsigned int NO, unsigned int NH, unsigned int TI, unsigned in
         pid_t pid = fork();
         if(pid == 0)
         {
-            process_NH(TI,stdout);  
+            process_NH(NO,NH,TI,stdout);  
         }
         else if(pid < 0)
         {
@@ -311,7 +365,7 @@ void process_main(unsigned int NO, unsigned int NH, unsigned int TI, unsigned in
         pid_t pid = fork();
         if(pid == 0)
         {
-            process_NO(TI,TB,stdout);   
+            process_NO(NH,NO,TI,TB,stdout);   
         }
         else if(pid < 0)
         {
@@ -373,12 +427,3 @@ int main(int argc, char * argv[])
 // • Použijte semafory pro synchronizaci procesů.
 // • Nepoužívejte aktivní čekání (včetně cyklického časového uspání procesu) pro účely
 // synchronizace.
-
-// actions:
-// started 
-// going to queue
-// creating molecule
-// molecule created 
-// not enough <element>
-
-//mozno pouzit setbuff
