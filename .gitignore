@@ -1,6 +1,8 @@
 *
 
 !*.c
+!*.h
 !Makefile
 !zaloha
 !.gitignore
+
