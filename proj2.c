@@ -10,7 +10,7 @@ char * buffer = NULL;
 //semafory
 sem_t * write_enable = NULL;
 sem_t * mutex = NULL; //create_molecule process
-sem_t * H_queue = NULL; //queues pouzit na ceknutie, ci je dost kyslikov a vodikov 
+sem_t * H_queue = NULL; //queues do kriza na execute kyslikov vo vodiku a naopak
 sem_t * O_queue = NULL;
 sem_t * barier_H = NULL; //create_molecule process
 sem_t * barier_O = NULL;
@@ -167,27 +167,11 @@ int is_positive_number(char * num)
     return TRUE;
 }
 
-    //PROCES NO
-    // • Každý kyslík je jednoznačně identifikován číslem idO, 0<idO<=NO
-    // • Po spuštění vypíše: A: O idO: started
-    // • Vypíše: A: O idO: going to queue a zařadí se do fronty kyslíků na vytváření molekul.
-
-    // • Ve chvíli, kdy není vytvářena žádná molekula, jsou z čela front uvolněny kyslík a dva vodíky. //BARIERA
-
-    // Příslušný proces po uvolnění vypíše: A: O idO: creating molecule noM (noM je číslo molekuly,
-    // ty jsou číslovány postupně od 1).
-    // • Pomocí usleep na náhodný čas v intervalu <0,TB> simuluje dobu vytváření molekuly.
-    // • Po uplynutí času vytváření molekuly informuje vodíky ze stejné molekuly, že je molekula
-    // dokončena.
-
-    // • Vypíše: A: O idO: molecule noM created a proces končí.
-    // • Pokud již není k dispozici dostatek vodíků (ani nebudou žádné další vytvořeny/zařazeny do (queue_O prazdna && idO == NO)
-    // fronty) vypisuje: A: O idO: not enough H a proces končí.
-
 void process_NO(int NH, int NO,int TI, int TB, FILE * file)
 {
     //inicializacia ID kysliku
     int local_ido = *id_o;
+    int was_bond = FALSE;
 
     //semafor na pristup do pamate - aby sa inkrementovala premenna v jeden cas iba raz
     
@@ -199,6 +183,7 @@ void process_NO(int NH, int NO,int TI, int TB, FILE * file)
     
     usleep((rand() % TI +1)*FROM_MICRO_TO_MILI); //TI + 1 kvoli intervalu <0,TI>
 
+    sem_post(O_queue);
     USE_SHM(my_fprintf(file,'O',local_ido,"going to queue \n"));
     
     sem_wait(mutex);
@@ -218,6 +203,8 @@ void process_NO(int NH, int NO,int TI, int TB, FILE * file)
         sem_post(barier_O);
         USE_SHM((*no_o)--);
 
+        was_bond = TRUE;
+
         sem_post(bond);
 
     }   
@@ -227,59 +214,46 @@ void process_NO(int NH, int NO,int TI, int TB, FILE * file)
     }
 
     sem_wait(barier_O);
-    // printf("molecule: %d H: %d O: %d\n", *no_m, *no_h, *no_o);
-    if( *no_m > NO || *no_m*2 > NH) //vyladit mozna
+
+
+    if( *no_m > NO || *no_m*2 > NH) 
     {
         USE_SHM(my_fprintf(file,'O',local_ido,"Not enough H\n"));
+        sem_post(barier_H);
+        sem_post(barier_O);
         exit(EXIT_SUCCESS);
     }
-
-    (void)NO;
-    (void)NH;
-    //podmienka here
-    
-    
-    USE_SHM(my_fprintf(file,'O',local_ido,"creating molecule %d \n",  local_mol)); //mozno va_list funkciu
-
+        
+    USE_SHM(my_fprintf(file,'O',local_ido,"creating molecule %d \n",  local_mol));
     usleep((rand() % TB +1)*FROM_MICRO_TO_MILI);
         
     USE_SHM(my_fprintf(file,'O',local_ido,"molecule %d created\n",  local_mol));
 
+    if(was_bond)
+    {
+        sem_wait(O_queue);
+    }
+
+    if(*no_m*2 < NH && *no_m == NO)
+    {
+        sem_post(barier_H);
+    }
+  
     sem_post(bonding_finished); //informovat dva kysliky o ukonceni procesu zlucovania
     sem_post(bonding_finished);
 
     (*no_m)++;
-
-    if( NO == *no_m)
-    {
-        sem_post(barier_H);
-    }
 
     sem_post(mutex);
 
     exit(EXIT_SUCCESS);
 }
 
-    //PROCES NH
-    // Každý vodík je jednoznačně identifikován číslem idH, 0<idH<=NO
-    // • Po spuštění vypíše: A: H idH: started
-    // • Následně čeká pomocí volání usleep náhodný čas v intervalu <0,TI>
-    // • Vypíše: A: H idH: going to queue a zařadí se do fronty vodíků na vytváření molekul.
-
-    // • Ve chvíli, kdy není vytvářena žádná molekula, jsou z čela front uvolněny kyslík a dva vodíky. //BARIERA
-
-    // Příslušný proces po uvolnění vypíše: A: H idH: creating molecule noM (noM je číslo molekuly,
-    // ty jsou číslovány postupně od 1).
-
-    // • Následně čeká na zprávu od kyslíku, že je tvorba molekuly dokončena.
-    // • Vypíše: A: H idH: molecule noM created a proces končí.
-    // • Pokud již není k dispozici dostatek vodíků (ani nebudou žádné další vytvořeny/zařazeny do
-    // fronty) vypisuje: A: H idH: not enough O or H a process končí.
-
 void process_NH(int NO, int NH, int TI, FILE * file)
 {
     //inicializacia ID vodiku
     int local_idh = *id_h;
+    int was_bond = FALSE;
 
     USE_SHM(*id_h += 1;);
 
@@ -290,6 +264,7 @@ void process_NH(int NO, int NH, int TI, FILE * file)
 
     usleep((rand() % TI +1)*FROM_MICRO_TO_MILI); //TI + 1 kvoli intervalu <0,TI>
 
+    sem_post(H_queue);
     USE_SHM(my_fprintf(file,'H',local_idh,"going to queue\n")); 
 
     sem_wait(mutex);
@@ -308,6 +283,8 @@ void process_NH(int NO, int NH, int TI, FILE * file)
         sem_post(barier_O);
         USE_SHM((*no_o)--;);
 
+        was_bond = TRUE;
+
         sem_post(bond);
     }
     else
@@ -315,14 +292,13 @@ void process_NH(int NO, int NH, int TI, FILE * file)
         sem_post(mutex);
     }
 
-    // (void)NH;
-    // (void)NO;
     sem_wait(barier_H);
 
     int local_mol = *no_m;
-    if( *no_m > NO || *no_m*2 > NH ) // vyladit
+    if( *no_m > NO || *no_m*2 > NH ) 
     {
         USE_SHM(my_fprintf(file,'H',local_idh,"Not enough O or H\n"));
+        sem_post(barier_H);
         sem_post(barier_O);
         exit(EXIT_SUCCESS);
     }
@@ -333,13 +309,15 @@ void process_NH(int NO, int NH, int TI, FILE * file)
 
     USE_SHM(my_fprintf(file,'H',local_idh,"molecule %d created\n",  local_mol));
 
-    if(*no_m -1 == NO)
+    if(was_bond)
+    {
+        sem_wait(H_queue);
+    }
+
+    if(*no_m < NO && *no_m * 2 == NH)
     {
         sem_post(barier_O);
-        sem_post(barier_H);
-        sem_post(mutex);
     }
-    printf("NO %d, NM : %d \n", NO, *no_m);
 
     exit(EXIT_SUCCESS);
 }
@@ -415,15 +393,7 @@ int main(int argc, char * argv[])
     return 0;
 }
 
-
-// PARSING ZADANIA
-
-// naraz je mozne vytvarat iba jednu molekulu. procesy uvolnia miesto dalsim atomov na vytvorenie dalsej molekuly a skoncia.
-// ak nie je k dispozici dostatok atomov na vytvorenie vodika (ziadne dalsie moleuly nebudu procesom 0 vytvorene),
-//  vsetky atomy uvolnit a skoncit proces. 
-
-// • Použijte sdílenou paměť pro implementaci čítače akcí a sdílených proměnných nutných pro
-// synchronizaci.
-// • Použijte semafory pro synchronizaci procesů.
-// • Nepoužívejte aktivní čekání (včetně cyklického časového uspání procesu) pro účely
-// synchronizace.
+//ak je pocet molekul mensi ako pocet kyslikov -> spusti proces kyslik
+//ak je pocet molekul * 2 mensi ako pocet vodikov -> spusti proces vodík 
+//check, ci je toho dostatok 
+//check ci je to koniec a toho dostatok
