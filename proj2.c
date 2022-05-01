@@ -25,14 +25,14 @@ int * id_h = NULL;
 int * created_atoms = NULL;
 
 FILE * out_file = NULL; 
-int shmo;
+// int shmo;
 
 //ukoncenie suboru a uvolnenie vsetkeho
 void exit_and_clean(int exit_type)
 {
     //zatvaranie suborov a uvolnenie zdielanej pamate
     fclose(out_file);
-    MUNMAP(out_file);
+    // MUNMAP(out_file);
     MUNMAP(action_num);
     MUNMAP(no_m);
     MUNMAP(no_h);
@@ -146,7 +146,7 @@ int init()
     if(created_atoms == MAP_FAILED) return EXIT_FAILURE;
     
     
-    
+    out_file = fopen("proj2.out","w");
     // shmo = shm_open(OUT_FILE, O_CREAT | O_EXCL, O_RDWR);
     
     //  ftruncate(shmo,sizeof(int)*8);
@@ -376,7 +376,7 @@ void process_main(unsigned int NO, unsigned int NH, unsigned int TI, unsigned in
         pid_t pid = fork();
         if(pid == 0)
         {
-            process_NH(NO,NH,TI,stdout);  
+            process_NH(NO,NH,TI,out_file);  
         }
         else if(pid < 0)
         {
@@ -389,7 +389,7 @@ void process_main(unsigned int NO, unsigned int NH, unsigned int TI, unsigned in
         pid_t pid = fork();
         if(pid == 0)
         {
-            process_NO(NH,NO,TI,TB,stdout);   
+            process_NO(NH,NO,TI,TB,out_file);   
         }
         else if(pid < 0)
         {
@@ -410,7 +410,7 @@ int main(int argc, char * argv[])
     if(init() == EXIT_FAILURE) exit_and_clean(EXIT_FAILURE);
 
     // char buffer[101];
-    // setbuf(out_file,buffer);
+    setbuf(out_file,NULL);
     //overenie poctu argumentov
     if(argc != 5)  error_exit("Zlý počet argumentov.");
  
