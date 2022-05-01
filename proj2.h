@@ -4,10 +4,12 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <semaphore.h>
+#include <sys/wait.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <time.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <fcntl.h>
 #include <stdarg.h>
 
@@ -29,5 +31,8 @@
 #define O_QUEUE "/xponec01.ios.proj2.sem_Oq"
 #define BONDING_FINISHED "/xponec01.ios.proj2.sem_bondf"
 #define BOND "/xponec01.ios.proj2.sem_bond"
+
+//file
+#define OUT_FILE "/xponec01.proj2map"
 
 #endif

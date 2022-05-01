@@ -1,8 +1,5 @@
 #include "proj2.h"
 
-//pouzitie programu
-const char usage[] = "%s [OXYGEN AMOUNT] [HYDROGEN AMOUNT] [ATOM MAX WAIT TIME TO JOIN QUEUE (0-1000 ms)] [CREATE MOLECULE MAX WAIT TIME (0-1000 ms)]\n";
-
 //cislo akcie, prvok, id prvku, akcia
 const char output_format[] = "%d: %c %d: ";
 char * buffer = NULL;
@@ -18,21 +15,24 @@ sem_t * bonding_finished = NULL;
 sem_t * bond = NULL;
 
 
-//zdielane citace
+//zdielane citace / mozno counter na atomy
 int * action_num = NULL;
 int * no_m = NULL;
 int * no_o = NULL;
 int * no_h = NULL;
 int * id_o = NULL;
 int * id_h = NULL;
+int * created_atoms = NULL;
 
 FILE * out_file = NULL; 
+int shmo;
 
 //ukoncenie suboru a uvolnenie vsetkeho
 void exit_and_clean(int exit_type)
 {
     //zatvaranie suborov a uvolnenie zdielanej pamate
     fclose(out_file);
+    MUNMAP(out_file);
     MUNMAP(action_num);
     MUNMAP(no_m);
     MUNMAP(no_h);
@@ -58,6 +58,8 @@ void exit_and_clean(int exit_type)
     sem_unlink(BARIER_H);
     sem_unlink(BARIER_O);
 
+    shm_unlink(OUT_FILE);
+
     exit(exit_type);
 }
 
@@ -70,6 +72,16 @@ void error_exit(char * msg){
 //inicializacia zdielanej pamate a vystupneho suboru
 int init()
 {
+    sem_unlink(WRITE_ENABLE_SEM);
+    sem_unlink(MUTEX_SEM);
+    sem_unlink(H_QUEUE);
+    sem_unlink(O_QUEUE);
+    sem_unlink(BONDING_FINISHED);
+    sem_unlink(BOND);
+    sem_unlink(BARIER_H);
+    sem_unlink(BARIER_O);
+
+    // exit_and_clean(EXIT_FAILURE);
     if((write_enable = sem_open(WRITE_ENABLE_SEM, O_CREAT | O_EXCL , 0660, 1)) == SEM_FAILED)
     {
         fprintf(stderr,"%s failed.\n", WRITE_ENABLE_SEM);
@@ -129,14 +141,26 @@ int init()
 
     MMAP(id_h);
     if(id_h == MAP_FAILED) return EXIT_FAILURE;
+
+    MMAP(created_atoms);
+    if(created_atoms == MAP_FAILED) return EXIT_FAILURE;
     
-    out_file = fopen("proj2.out", "w");
+    
+    
+    // shmo = shm_open(OUT_FILE, O_CREAT | O_EXCL, O_RDWR);
+    
+    //  ftruncate(shmo,sizeof(int)*8);
+    // out_file = (int *)mmap();
+    // if(out_file == MAP_FAILED) return EXIT_FAILURE;
+
+    
     *action_num = 1;
     *no_m = 1;
     *no_h = 0;
     *no_o = 0;
     *id_h = 1;
     *id_o = 1;
+    *created_atoms =  0;
     return EXIT_SUCCESS;
 }
 
@@ -171,9 +195,6 @@ void process_NO(int NH, int NO,int TI, int TB, FILE * file)
 {
     //inicializacia ID kysliku
     int local_ido = *id_o;
-    int was_bond = FALSE;
-
-    //semafor na pristup do pamate - aby sa inkrementovala premenna v jeden cas iba raz
     
     USE_SHM(*id_o += 1);
     
@@ -183,7 +204,6 @@ void process_NO(int NH, int NO,int TI, int TB, FILE * file)
     
     usleep((rand() % TI +1)*FROM_MICRO_TO_MILI); //TI + 1 kvoli intervalu <0,TI>
 
-    sem_post(O_queue);
     USE_SHM(my_fprintf(file,'O',local_ido,"going to queue \n"));
     
     sem_wait(mutex);
@@ -195,56 +215,68 @@ void process_NO(int NH, int NO,int TI, int TB, FILE * file)
     {
         sem_wait(bond);
 
-        sem_post(barier_H);
-        sem_post(barier_H);
+        sem_post(H_queue);
+        sem_post(H_queue);
 
         USE_SHM((*no_h) -= 2);
 
-        sem_post(barier_O);
+        sem_post(O_queue);
         USE_SHM((*no_o)--);
-
-        was_bond = TRUE;
 
         sem_post(bond);
 
     }   
     else
     {
+        if( *no_m > NO || *no_m*2 > NH || (NO == 1 && NH == 1)) 
+        {
+            USE_SHM(my_fprintf(file,'O',local_ido,"Not enough H\n"));
+            sem_post(H_queue);
+            sem_post(O_queue);
+            sem_post(mutex);
+            exit(EXIT_SUCCESS);
+        }
+
         sem_post(mutex);
     }
 
-    sem_wait(barier_O);
+    sem_wait(O_queue);
 
-
-    if( *no_m > NO || *no_m*2 > NH) 
-    {
-        USE_SHM(my_fprintf(file,'O',local_ido,"Not enough H\n"));
-        sem_post(barier_H);
-        sem_post(barier_O);
-        exit(EXIT_SUCCESS);
-    }
         
     USE_SHM(my_fprintf(file,'O',local_ido,"creating molecule %d \n",  local_mol));
     usleep((rand() % TB +1)*FROM_MICRO_TO_MILI);
         
     USE_SHM(my_fprintf(file,'O',local_ido,"molecule %d created\n",  local_mol));
-
-    if(was_bond)
-    {
-        sem_wait(O_queue);
-    }
-
-    if(*no_m*2 < NH && *no_m == NO)
-    {
-        sem_post(barier_H);
-    }
-  
+    
+    USE_SHM((*created_atoms)++);
+    USE_SHM((*no_m)++);
     sem_post(bonding_finished); //informovat dva kysliky o ukonceni procesu zlucovania
     sem_post(bonding_finished);
 
-    (*no_m)++;
+    //zastavit semaforom
+    sem_wait(barier_O);
+    if(  (*no_m -1) == NO && NH != NO*2 ) //(( NO - NH > 0) &&
+    {
+        for(int i = 0; i < NH - *no_m; i++)
+        {
+            sem_post(H_queue);
+        }
+    }
+    
+
+    // sem_post(barier_H);
+    // sem_post(barier_H);
+
+
+   // if( (*no_m == NO && (*no_m)*2 >= NH ) ) //(( NO - NH > 0) && || ( (*no_m)*2 >= NH )
+//    if(  (*no_m ) == NO && NH != NO*2 && *created_atoms % 3 == 0)
+//     {
+//         printf("EXECUTed O\n");
+//         sem_post(H_queue);
+//     }
 
     sem_post(mutex);
+   
 
     exit(EXIT_SUCCESS);
 }
@@ -253,7 +285,6 @@ void process_NH(int NO, int NH, int TI, FILE * file)
 {
     //inicializacia ID vodiku
     int local_idh = *id_h;
-    int was_bond = FALSE;
 
     USE_SHM(*id_h += 1;);
 
@@ -264,7 +295,6 @@ void process_NH(int NO, int NH, int TI, FILE * file)
 
     usleep((rand() % TI +1)*FROM_MICRO_TO_MILI); //TI + 1 kvoli intervalu <0,TI>
 
-    sem_post(H_queue);
     USE_SHM(my_fprintf(file,'H',local_idh,"going to queue\n")); 
 
     sem_wait(mutex);
@@ -275,49 +305,65 @@ void process_NH(int NO, int NH, int TI, FILE * file)
     {
         sem_wait(bond);
 
-        sem_post(barier_H);
-        sem_post(barier_H);
+        sem_post(H_queue);
+        sem_post(H_queue);
         
         USE_SHM((*no_h) -= 2;);
 
-        sem_post(barier_O);
+        sem_post(O_queue);
         USE_SHM((*no_o)--;);
-
-        was_bond = TRUE;
 
         sem_post(bond);
     }
     else
     {
+        if( *no_m > NO || *no_m*2 > NH || (NO == 1 && NH == 1)) 
+        {
+            USE_SHM(my_fprintf(file,'H',local_idh,"Not enough O or H\n"));
+            sem_post(H_queue);
+            sem_post(O_queue);
+            sem_post(mutex);
+            exit(EXIT_SUCCESS);
+        }
         sem_post(mutex);
     }
 
-    sem_wait(barier_H);
+    sem_wait(H_queue);
+    
 
     int local_mol = *no_m;
-    if( *no_m > NO || *no_m*2 > NH ) 
-    {
-        USE_SHM(my_fprintf(file,'H',local_idh,"Not enough O or H\n"));
-        sem_post(barier_H);
-        sem_post(barier_O);
-        exit(EXIT_SUCCESS);
-    }
+    
+    if( *no_m > NO || *no_m*2 > NH || (NO == 1 && NH == 1)) 
+        {
+            printf("executed insinde\n");
+            USE_SHM(my_fprintf(file,'H',local_idh,"Not enough O or H\n"));
+            sem_post(H_queue);
+            sem_post(O_queue);
+            exit(EXIT_SUCCESS);
+        }
 
     USE_SHM(my_fprintf(file,'H',local_idh,"creating molecule %d\n",  local_mol));
 
     sem_wait(bonding_finished);
 
     USE_SHM(my_fprintf(file,'H',local_idh,"molecule %d created\n",  local_mol));
+    USE_SHM((*created_atoms)++);
 
-    if(was_bond)
-    {
-        sem_wait(H_queue);
-    }
-
-    if(*no_m < NO && *no_m * 2 == NH)
+    if(*created_atoms % 3 == 0)
     {
         sem_post(barier_O);
     }
+    
+    if( (NH == *no_m*2 || NH -1 == *no_m*2) && *created_atoms % 3 == 0)
+    {
+        for(int i = 0; i < NO - *no_m; i++)
+        {
+            sem_post(O_queue);
+        }
+    }
+    
+     
+    
 
     exit(EXIT_SUCCESS);
 }
@@ -350,8 +396,6 @@ void process_main(unsigned int NO, unsigned int NH, unsigned int TI, unsigned in
             error_exit("Fork error.");
         }
     }
-    (void)TB;
-    (void)NO;
 }
 
 // M           M
@@ -365,6 +409,8 @@ int main(int argc, char * argv[])
     //inicializacia zdielanej pamate
     if(init() == EXIT_FAILURE) exit_and_clean(EXIT_FAILURE);
 
+    // char buffer[101];
+    // setbuf(out_file,buffer);
     //overenie poctu argumentov
     if(argc != 5)  error_exit("Zlý počet argumentov.");
  
