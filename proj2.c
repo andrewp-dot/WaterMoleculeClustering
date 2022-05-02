@@ -25,7 +25,6 @@ int * id_h = NULL;
 int * created_atoms = NULL;
 
 FILE * out_file = NULL; 
-// int shmo;
 
 //ukoncenie suboru a uvolnenie vsetkeho
 void exit_and_clean(int exit_type)
@@ -58,8 +57,6 @@ void exit_and_clean(int exit_type)
     sem_unlink(BARIER_H);
     sem_unlink(BARIER_O);
 
-    shm_unlink(OUT_FILE);
-
     exit(exit_type);
 }
 
@@ -72,6 +69,7 @@ void error_exit(char * msg){
 //inicializacia zdielanej pamate a vystupneho suboru
 int init()
 {
+    //pre istotu odstranenie moznych inicializovanych semaforov
     sem_unlink(WRITE_ENABLE_SEM);
     sem_unlink(MUTEX_SEM);
     sem_unlink(H_QUEUE);
@@ -81,7 +79,6 @@ int init()
     sem_unlink(BARIER_H);
     sem_unlink(BARIER_O);
 
-    // exit_and_clean(EXIT_FAILURE);
     if((write_enable = sem_open(WRITE_ENABLE_SEM, O_CREAT | O_EXCL , 0660, 1)) == SEM_FAILED)
     {
         fprintf(stderr,"%s failed.\n", WRITE_ENABLE_SEM);
@@ -147,11 +144,6 @@ int init()
     
     
     out_file = fopen("proj2.out","w");
-    // shmo = shm_open(OUT_FILE, O_CREAT | O_EXCL, O_RDWR);
-    
-    //  ftruncate(shmo,sizeof(int)*8);
-    // out_file = (int *)mmap();
-    // if(out_file == MAP_FAILED) return EXIT_FAILURE;
 
     
     *action_num = 1;
@@ -263,18 +255,6 @@ void process_NO(int NH, int NO,int TI, int TB, FILE * file)
         }
     }
     
-
-    // sem_post(barier_H);
-    // sem_post(barier_H);
-
-
-   // if( (*no_m == NO && (*no_m)*2 >= NH ) ) //(( NO - NH > 0) && || ( (*no_m)*2 >= NH )
-//    if(  (*no_m ) == NO && NH != NO*2 && *created_atoms % 3 == 0)
-//     {
-//         printf("EXECUTed O\n");
-//         sem_post(H_queue);
-//     }
-
     sem_post(mutex);
    
 
@@ -288,7 +268,6 @@ void process_NH(int NO, int NH, int TI, FILE * file)
 
     USE_SHM(*id_h += 1;);
 
-    // printf("A %d\n", local_idh);
     srand(time(NULL));
 
     USE_SHM(my_fprintf(file,'H',local_idh,"started\n"));
@@ -409,8 +388,8 @@ int main(int argc, char * argv[])
     //inicializacia zdielanej pamate
     if(init() == EXIT_FAILURE) exit_and_clean(EXIT_FAILURE);
 
-    // char buffer[101];
     setbuf(out_file,NULL);
+
     //overenie poctu argumentov
     if(argc != 5)  error_exit("Zlý počet argumentov.");
  

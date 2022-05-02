@@ -32,7 +32,4 @@
 #define BONDING_FINISHED "/xponec01.ios.proj2.sem_bondf"
 #define BOND "/xponec01.ios.proj2.sem_bond"
 
-//file
-#define OUT_FILE "/xponec01.proj2map"
-
 #endif
