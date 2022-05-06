@@ -36,6 +36,9 @@ void exit_and_clean(int exit_type)
     MUNMAP(no_m);
     MUNMAP(no_h);
     MUNMAP(no_o);
+    MUNMAP(id_o);
+    MUNMAP(id_h);
+    MUNMAP(created_atoms);
 
     //zatvaranie semaforov 
     sem_close(write_enable); //neuvolni sa kvoli interuptu - vyriesit not enough [ELEMENT]
@@ -186,7 +189,8 @@ int is_positive_number(char * num)
 void process_NO(int NH, int NO,int TI, int TB, FILE * file)
 {
     //inicializacia ID kysliku
-    int local_ido = *id_o;
+    int local_ido;
+    USE_SHM(local_ido = *id_o);
     
     USE_SHM(*id_o += 1);
     
@@ -200,7 +204,8 @@ void process_NO(int NH, int NO,int TI, int TB, FILE * file)
     
     sem_wait(mutex);
     
-    int local_mol = *no_m;
+    int local_mol;
+    USE_SHM(local_mol = *no_m);
     USE_SHM((*no_o)++);
 
     if(*no_h >= 2) 
@@ -222,7 +227,7 @@ void process_NO(int NH, int NO,int TI, int TB, FILE * file)
     {
         if( *no_m > NO || *no_m*2 > NH || (NO == 1 && NH == 1)) 
         {
-            USE_SHM(my_fprintf(file,'O',local_ido,"Not enough H\n"));
+            USE_SHM(my_fprintf(file,'O',local_ido,"not enough H\n"));
             sem_post(H_queue);
             sem_post(O_queue);
             sem_post(mutex);
@@ -264,7 +269,8 @@ void process_NO(int NH, int NO,int TI, int TB, FILE * file)
 void process_NH(int NO, int NH, int TI, FILE * file)
 {
     //inicializacia ID vodiku
-    int local_idh = *id_h;
+    int local_idh;
+    USE_SHM(local_idh = *id_h);
 
     USE_SHM(*id_h += 1;);
 
@@ -298,7 +304,7 @@ void process_NH(int NO, int NH, int TI, FILE * file)
     {
         if( *no_m > NO || *no_m*2 > NH || (NO == 1 && NH == 1)) 
         {
-            USE_SHM(my_fprintf(file,'H',local_idh,"Not enough O or H\n"));
+            USE_SHM(my_fprintf(file,'H',local_idh,"not enough O or H\n"));
             sem_post(H_queue);
             sem_post(O_queue);
             sem_post(mutex);
@@ -310,12 +316,12 @@ void process_NH(int NO, int NH, int TI, FILE * file)
     sem_wait(H_queue);
     
 
-    int local_mol = *no_m;
+    int local_mol;
+    USE_SHM(local_mol = *no_m);
     
     if( *no_m > NO || *no_m*2 > NH || (NO == 1 && NH == 1)) 
         {
-            printf("executed insinde\n");
-            USE_SHM(my_fprintf(file,'H',local_idh,"Not enough O or H\n"));
+            USE_SHM(my_fprintf(file,'H',local_idh,"not enough O or H\n"));
             sem_post(H_queue);
             sem_post(O_queue);
             exit(EXIT_SUCCESS);
