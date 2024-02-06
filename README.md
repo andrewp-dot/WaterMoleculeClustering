@@ -3,7 +3,7 @@
 The project is aimed for process synchronization using semaphors.
 
 ### Usage: 
-<code>./proj2 [OXYGEN AMOUNT] [HYDROGEN AMOUNT] [ATOM MAX WAIT TIME TO JOIN QUEUE (0-1000 ms)] [CREATE MOLECULE MAX WAIT TIME (0-1000 ms)]<code>
+<code>./proj2 [OXYGEN AMOUNT] [HYDROGEN AMOUNT] [ATOM MAX WAIT TIME TO JOIN QUEUE (0-1000 ms)] [CREATE MOLECULE MAX WAIT TIME (0-1000 ms)]</code>
 
 ### Output example:
 <code>
